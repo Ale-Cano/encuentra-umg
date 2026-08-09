@@ -1,0 +1,34 @@
+.card{padding:0;overflow:hidden}
+.card-body{padding:22px}
+.card-photo{width:100%;height:210px;object-fit:cover;display:block}
+.photo-field{border:2px dashed #b9c8c1;border-radius:10px;padding:16px;background:#f8faf8}
+.photo-field small{color:var(--muted);font-weight:400}
+.field-help{display:block;color:var(--muted);font-weight:400;line-height:1.35;margin-top:1px}
+.photo-preview{width:100%;max-height:260px;object-fit:contain;border-radius:9px;margin-top:8px;background:#edf0ed}
+.detail-photo{width:100%;max-height:390px;object-fit:contain;border-radius:12px;margin-bottom:22px;background:#edf0ed}
+.photo-admin{display:flex;gap:12px;align-items:end;margin:18px 0;padding:16px;border:1px dashed var(--line);border-radius:10px;background:#f7f9fb}.photo-admin label{flex:1}
+.status-admin{margin:18px 0;padding:18px;border:1px solid #c8d9e6;border-radius:10px;background:#eef5fa}.status-admin label{max-width:100%}.status-admin .detail-actions{margin:12px 0 0}
+:root{--green:#174d79;--mint:#dceaf4;--cream:#f7f8fa;--ink:#153b5d;--muted:#63788b;--orange:#cf2f32;--line:#d5dee6}
+.brand>span{background:transparent;width:50px;height:50px}
+.brand>span img{width:50px;height:50px;object-fit:contain;display:block}
+.hero{background:#174d79;isolation:isolate}
+.hero:before{content:"";position:absolute;inset:0;background:url('campus-background.jpeg') center/cover no-repeat;opacity:.18;filter:grayscale(.08);z-index:-2}
+.hero:after{border-color:rgba(199,153,55,.13);z-index:-1}
+.hero>div,.hero>aside{position:relative;z-index:1}
+.hero aside{text-align:center;padding-left:0}
+.hero aside strong{display:block;margin:0 auto 4px}
+.hero aside span{display:block;text-align:center}
+.hero-note{max-width:330px;margin:38px auto 0;text-align:center}
+.hero h1 em{color:#f1c35b}
+.hero-logo{width:112px;height:112px;object-fit:contain;display:block;margin:0 auto 22px;filter:drop-shadow(0 5px 12px rgba(0,0,0,.2))}
+.eyebrow{color:#cf2f32}
+.hero .eyebrow{color:#f1c35b}
+.tag,.status,.badge{background:#dceaf4;color:#174d79}
+.tag.lost{background:#f9d9da;color:#a51f25}
+.tag.found{background:#d8e9f5;color:#174d79}
+.status.reported{background:#fff0c9;color:#805b00}
+.status.stored{background:#d8e9f5;color:#174d79}
+.status.claimed{background:#f7e0ae;color:#745000}
+.status.delivered{background:#d9eddf;color:#23633a}
+footer{background:#113b60}
+@media(max-width:800px){.hero:before{opacity:.12;background-position:center}.hero-logo{width:88px;height:88px}}
