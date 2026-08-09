@@ -29,6 +29,14 @@ Acceso inicial del personal:
 
 Cambie estas credenciales antes de usar el sistema fuera de una demostración. El archivo de datos `data/objetos.json` se crea automáticamente en el primer inicio.
 
-## Respaldo
+## Respaldo y recuperación
 
-Con el servidor detenido, copie `data/objetos.json` a una ubicación segura. Para recuperar el sistema, sustituya el archivo por la copia y vuelva a iniciar el servidor.
+El servidor crea automáticamente un respaldo diario en `data/backups/` y conserva los 30 más recientes. La carpeta `data/` está excluida de Git para evitar publicar datos personales.
+
+Para recuperar un respaldo, detenga el servidor y ejecute:
+
+```powershell
+pnpm restore -- data/backups/objetos-AAAA-MM-DD.json
+```
+
+El comando valida la estructura del archivo, guarda una copia de seguridad de los datos actuales y reemplaza `data/objetos.json` de forma atómica. Después puede iniciar nuevamente el servidor con `pnpm start`.

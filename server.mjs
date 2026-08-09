@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
+import { copyFile, readFile, readdir, unlink, writeFile, mkdir, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 import { randomBytes, pbkdf2Sync, timingSafeEqual } from 'node:crypto';
@@ -11,6 +11,9 @@ const STATIC = join(ROOT, 'static');
 const DATA_DIR = join(ROOT, 'data');
 const DATA_FILE = join(DATA_DIR, 'objetos.json');
 const UPLOADS = join(DATA_DIR, 'uploads');
+const BACKUPS = join(DATA_DIR, 'backups');
+const BACKUP_CHECK_INTERVAL = 60 * 60 * 1000;
+const BACKUP_RETENTION = 30;
 const PORT = Number(process.env.PORT || 8000);
 const REPORT_EMAIL = process.env.REPORT_EMAIL || 'ecanos2@miumg.edu.gt';
 const sessions = new Map();
@@ -49,6 +52,21 @@ function saveStore() {
     await rename(temp, DATA_FILE);
   });
   return writeQueue;
+}
+
+async function createDailyBackup() {
+  await mkdir(BACKUPS, { recursive: true });
+  const date = new Date().toISOString().slice(0, 10);
+  const target = join(BACKUPS, `objetos-${date}.json`);
+  if (!existsSync(target)) {
+    await copyFile(DATA_FILE, target);
+    console.log(`Respaldo diario creado: ${target}`);
+  }
+  const files = (await readdir(BACKUPS))
+    .filter(name => /^objetos-\d{4}-\d{2}-\d{2}\.json$/.test(name))
+    .sort()
+    .reverse();
+  await Promise.all(files.slice(BACKUP_RETENTION).map(name => unlink(join(BACKUPS, name))));
 }
 
 function json(res, status, value, headers = {}) {
@@ -164,10 +182,12 @@ async function api(req, res, url) {
 
   if (req.method === 'GET' && path === '/api/reports') {
     let reports = [...store.reports].sort((a, b) => b.created_at.localeCompare(a.created_at));
-    for (const [param, field] of [['kind', 'kind'], ['type', 'object_type'], ['status', 'status'], ['date', 'event_date']]) {
+    for (const [param, field] of [['kind', 'kind'], ['status', 'status'], ['date', 'event_date']]) {
       const value = url.searchParams.get(param); if (value) reports = reports.filter(x => x[field] === value);
     }
-    const q = (url.searchParams.get('q') || '').toLowerCase();
+    const type = (url.searchParams.get('type') || '').trim().toLowerCase();
+    if (type) reports = reports.filter(x => x.object_type.toLowerCase().includes(type));
+    const q = (url.searchParams.get('q') || '').trim().toLowerCase();
     if (q) reports = reports.filter(x => [x.title, x.public_description, x.object_type, x.event_place].some(v => v.toLowerCase().includes(q)));
     return json(res, 200, { reports: reports.map(x => user ? x : publicReport(x)) });
   }
@@ -176,8 +196,10 @@ async function api(req, res, url) {
     const data = await body(req);
     const required = ['kind', 'object_type', 'title', 'public_description', 'event_date', 'event_place', 'career'];
     if (required.some(x => !String(data[x] || '').trim())) return json(res, 400, { error: 'Completa todos los campos obligatorios' });
-    if (data.career !== 'OTROS' && !String(data.student_id || '').trim()) return json(res, 400, { error: 'El número de carné es obligatorio para estudiantes' });
     if (!['found', 'lost'].includes(data.kind)) return json(res, 400, { error: 'Tipo de reporte inválido' });
+    if (data.career !== 'OTROS' && !String(data.student_id || '').trim()) return json(res, 400, { error: 'El número de carné es obligatorio para estudiantes' });
+    if (data.kind === 'lost' && !String(data.contact_value || '').trim()) return json(res, 400, { error: 'Indica un teléfono o correo de contacto' });
+    if (data.kind === 'found' && !String(data.storage_place || '').trim()) return json(res, 400, { error: 'Indica dónde quedó resguardado el objeto' });
     const id = ++store.counters.reports; const created = stamp();
     let imageUrl = '';
     if (data.image_data) {
@@ -220,15 +242,18 @@ async function api(req, res, url) {
 
   if (req.method === 'POST' && claimCreateMatch) {
     const id = Number(claimCreateMatch[1]); const data = await body(req);
-    if (!store.reports.some(x => x.id === id)) return json(res, 404, { error: 'Reporte no encontrado' });
+    const report = store.reports.find(x => x.id === id);
+    if (!report) return json(res, 404, { error: 'Reporte no encontrado' });
+    if (report.kind !== 'found') return json(res, 409, { error: 'Solo se pueden reclamar objetos encontrados' });
+    if (report.status === 'delivered') return json(res, 409, { error: 'Este objeto ya fue entregado' });
     if (['claimant_name', 'claimant_contact', 'description'].some(x => !String(data[x] || '').trim())) return json(res, 400, { error: 'Completa la información de la reclamación' });
     const claim = { id: ++store.counters.claims, report_id: id, claimant_name: data.claimant_name.trim(), claimant_contact: data.claimant_contact.trim(), description: data.description.trim(), status: 'pending', staff_notes: '', created_at: stamp(), reviewed_at: '' };
     store.claims.push(claim);
     addHistory(id, 'Reclamación', 'Se recibió una solicitud de reclamación', 'Público'); await saveStore();
-    const report = store.reports.find(x => x.id === id); let notification;
+    let notification;
     try { notification = await notifyClaim(report, claim); }
     catch (error) { console.error('No se pudo enviar la notificación de reclamación:', error.message); notification = { sent: false, reason: 'SEND_FAILED' }; }
-    return json(res, 201, { ok: true, notification });
+    return json(res, 201, { ok: true, id: claim.id, notification });
   }
 
   if (!user && (statusMatch || photoMatch || claimReviewMatch || deliveryMatch)) return json(res, 401, { error: 'Debes iniciar sesión' });
@@ -253,15 +278,21 @@ async function api(req, res, url) {
     const id = Number(statusMatch[1]); const data = await body(req); const labels = { reported: 'Reportado', stored: 'Resguardado', claimed: 'Reclamado', delivered: 'Entregado' };
     const report = store.reports.find(x => x.id === id); if (!report) return json(res, 404, { error: 'Reporte no encontrado' });
     if (!labels[data.status]) return json(res, 400, { error: 'Estado inválido' });
+    if (report.status === 'delivered') return json(res, 409, { error: 'Un reporte entregado no puede volver a abrirse' });
+    if (data.status === 'delivered') return json(res, 409, { error: 'Usa la opción Registrar entrega para cerrar el reporte' });
+    if (data.status === 'claimed' && !store.claims.some(x => x.report_id === id && x.status === 'approved')) return json(res, 409, { error: 'Debes aprobar una reclamación antes de marcar el objeto como reclamado' });
     report.status = data.status; report.updated_at = stamp(); addHistory(id, 'Cambio de estado', `Estado actualizado a ${labels[data.status]}`, user.name); await saveStore(); return json(res, 200, { ok: true });
   }
 
   if (req.method === 'PATCH' && claimReviewMatch) {
     const id = Number(claimReviewMatch[1]), claimId = Number(claimReviewMatch[2]), data = await body(req);
     if (!['approved', 'rejected'].includes(data.status)) return json(res, 400, { error: 'Resultado inválido' });
+    const report = store.reports.find(x => x.id === id); if (!report) return json(res, 404, { error: 'Reporte no encontrado' });
     const claim = store.claims.find(x => x.id === claimId && x.report_id === id); if (!claim) return json(res, 404, { error: 'Reclamación no encontrada' });
+    if (report.status === 'delivered') return json(res, 409, { error: 'No se pueden revisar reclamaciones después de la entrega' });
+    if (claim.status !== 'pending') return json(res, 409, { error: 'Esta reclamación ya fue revisada' });
     claim.status = data.status; claim.staff_notes = String(data.staff_notes || '').trim(); claim.reviewed_at = stamp();
-    if (data.status === 'approved') { const report = store.reports.find(x => x.id === id); report.status = 'claimed'; report.updated_at = stamp(); }
+    if (data.status === 'approved') { report.status = 'claimed'; report.updated_at = stamp(); }
     addHistory(id, 'Verificación', `Reclamación ${data.status === 'approved' ? 'aprobada' : 'rechazada'}`, user.name); await saveStore(); return json(res, 200, { ok: true });
   }
 
@@ -269,6 +300,7 @@ async function api(req, res, url) {
     const id = Number(deliveryMatch[1]); const data = await body(req); const report = store.reports.find(x => x.id === id);
     if (!report) return json(res, 404, { error: 'Reporte no encontrado' });
     if (store.deliveries.some(x => x.report_id === id)) return json(res, 409, { error: 'La entrega ya fue registrada' });
+    if (report.status !== 'claimed' || !store.claims.some(x => x.report_id === id && x.status === 'approved')) return json(res, 409, { error: 'Debes aprobar una reclamación antes de registrar la entrega' });
     if (!String(data.recipient_name || '').trim()) return json(res, 400, { error: 'Indica quién recibe el objeto' });
     store.deliveries.push({ id: ++store.counters.deliveries, report_id: id, recipient_name: data.recipient_name.trim(), recipient_document: String(data.recipient_document || '').trim(), responsible: user.name, notes: String(data.notes || '').trim(), delivered_at: stamp() });
     report.status = 'delivered'; report.updated_at = stamp(); addHistory(id, 'Entrega', `Entregado a ${data.recipient_name.trim()}`, user.name); await saveStore(); return json(res, 201, { ok: true });
@@ -278,6 +310,8 @@ async function api(req, res, url) {
 }
 
 await loadStore();
+await createDailyBackup();
+setInterval(() => createDailyBackup().catch(error => console.error('No se pudo crear el respaldo diario:', error.message)), BACKUP_CHECK_INTERVAL).unref();
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);

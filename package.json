@@ -10,7 +10,8 @@
   "scripts": {
     "dev": "node --env-file-if-exists=.env --watch server.mjs",
     "start": "node --env-file-if-exists=.env server.mjs",
-    "check": "node --check server.mjs && node --check static/app.js"
+    "check": "node --check server.mjs && node --check static/app.js && node --check scripts/restore-backup.mjs",
+    "restore": "node scripts/restore-backup.mjs"
   },
   "dependencies": {
     "nodemailer": "^9.0.5"
